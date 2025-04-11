@@ -21,6 +21,64 @@ RED="\033[0;31m"
 GREEN="\033[0;32m"
 NC="\033[0m"
 
+
+# Log file to record which services are found =============================================
+LOG_FILE="/tmp/service-check.log"
+
+# Function to check and restart a service if it exists and is active
+restart_service() {
+    local service="$1"
+    # Check if the service exists
+    if systemctl list-units --full -all | grep -q "$service"; then
+        echo "$service exists" | tee -a "$LOG_FILE"
+        # Check if the service is active
+        if systemctl is-active --quiet "$service"; then
+            echo "Restarting $service..." | tee -a "$LOG_FILE"
+            if sudo systemctl restart "$service"; then
+                echo "$service restarted successfully." | tee -a "$LOG_FILE"
+            else
+                echo -e "${RED}Error: Failed to restart $service${NC}" | tee -a "$LOG_FILE"
+            fi
+        else
+            echo "$service is not active, skipping restart." | tee -a "$LOG_FILE"
+        fi
+    else
+        echo "$service does not exist, skipping restart." | tee -a "$LOG_FILE"
+    fi
+}
+
+# Initialize log file
+echo "Service check log - $(date)" > "$LOG_FILE"
+
+# Run package updates non-interactively to avoid prompts
+echo "Updating system packages..."
+export DEBIAN_FRONTEND=noninteractive
+if ! sudo apt update; then
+    echo -e "${RED}Error: Failed to update package lists${NC}" | tee -a "$LOG_FILE"
+    exit 1
+fi
+if ! sudo apt upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"; then
+    echo -e "${RED}Error: Failed to upgrade packages${NC}" | tee -a "$LOG_FILE"
+    exit 1
+fi
+
+# Configure needrestart to auto-restart services (to avoid prompts)
+echo "Configuring needrestart for automatic restarts..."
+sudo mkdir -p /etc/needrestart
+echo "\$nrconf{restart} = 'a';" | sudo tee /etc/needrestart/needrestart.conf > /dev/null
+
+# Check and restart services listed in the prompt
+echo "Checking and restarting services..."
+for service in dbus.service irqbalance.service multipathd.service networkd-dispatcher.service packagekit.service polkit.service ssh.service systemd-logind.service unattended-upgrades.service user@1000.service; do
+    restart_service "$service"
+done
+
+# Display which services were found
+echo "Services found on this VPS (see $LOG_FILE for details):"
+cat "$LOG_FILE"
+# =================================================================================
+
+
 # Check if script is run as root
 if [ "$EUID" -ne 0 ]; then
     echo -e "${RED}Error: Please run this script as root (use sudo).${NC}"
@@ -242,29 +300,30 @@ else
 fi
 
 # Download and install DSpace
-echo "Downloading and installing DSpace $DSPACE_VERSION..."
+# Clone DSpace from your GitHub repository
+echo "Cloning DSpace from your GitHub repository..."
 cd /usr/local/src
-DSPACE_URL="https://github.com/DSpace/DSpace/archive/refs/tags/dspace-$DSPACE_VERSION.tar.gz"
-DSPACE_FILE="dspace-$DSPACE_VERSION.tar.gz"
-echo "Downloading DSpace from: $DSPACE_URL"
-if ! curl -L -O "$DSPACE_URL"; then
-    echo -e "${RED}Error: Failed to download DSpace from $DSPACE_URL${NC}"
+
+# Replace with your actual GitHub repository URL
+REPO_URL="git@github.com:manojjsltc/DSpace-dspace-7.6.3.git"
+REPO_DIR="DSpace-dspace-7.6.3"
+
+echo "Cloning repository from: $REPO_URL"
+if ! git clone "$REPO_URL" "$REPO_DIR"; then
+    echo -e "${RED}Error: Failed to clone repository from $REPO_URL${NC}"
     exit 1
 fi
-FILE_SIZE=$(stat -c%s "$DSPACE_FILE")
-if [ "$FILE_SIZE" -lt 1000000 ]; then
-    echo -e "${RED}Error: Downloaded file is too small ($FILE_SIZE bytes), expected ~1MB+. Download failed.${NC}"
+
+cd "$REPO_DIR"
+
+# Switch to the production branch
+echo "Switching to sltc-live branch..."
+if ! git checkout sltc-live; then
+    echo -e "${RED}Error: Failed to switch to production branch. Ensure the branch exists.${NC}"
     exit 1
 fi
-if ! tar -xzf "$DSPACE_FILE"; then
-    echo -e "${RED}Error: Failed to extract $DSPACE_FILE. File may be corrupt.${NC}"
-    exit 1
-fi
-if ! mv "DSpace-dspace-$DSPACE_VERSION" "dspace-$DSPACE_VERSION-src-release"; then
-    echo -e "${RED}Error: Failed to rename DSpace directory${NC}"
-    exit 1
-fi
-cd "dspace-$DSPACE_VERSION-src-release"
+
+echo "Successfully cloned and switched to production branch in $REPO_DIR"
 
 # Build DSpace with Maven
 echo "Building DSpace with Maven..."
