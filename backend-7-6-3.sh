@@ -348,18 +348,6 @@ if ! sudo -u solr /opt/solr/bin/solr create_core -c authority -d /opt/solr/serve
     exit 1
 fi
 
-# Configure DSpace database settings
-echo "Configuring DSpace database settings..."
-cat <<EOL > /dspace/config/local.cfg
-db.url = jdbc:postgresql://localhost:5432/dspace
-db.username = dspace
-db.password = dspace
-dspace.dir = /dspace
-dspace.hostname = 13.50.4.238
-dspace.port = 8080
-solr.server = http://localhost:8983/solr
-EOL
-
 # Initialize database
 echo "Initializing DSpace database..."
 if ! /dspace/bin/dspace database migrate; then
