@@ -6,8 +6,17 @@ sudo chown -R ubuntu:ubuntu /var/www/dspace-ui
 # Change permissions of dspace-ui directory
 sudo chmod -R 755 /var/www/dspace-ui
 
+# Check if config directory exists, create it if it doesn't
+if [ ! -d "/var/www/dspace-ui/config" ]; then
+    echo "Config directory does not exist. Creating /var/www/dspace-ui/config..."
+    sudo mkdir -p /var/www/dspace-ui/config
+    # Set ownership and permissions for the new config directory
+    sudo chown ubuntu:ubuntu /var/www/dspace-ui/config
+    sudo chmod 755 /var/www/dspace-ui/config
+fi
+
 # Create/overwrite config.production.yaml with specified content
-cat << EOF > /var/www/dspace-ui/config/config.production.yaml
+sudo tee /var/www/dspace-ui/config/config.production.yaml > /dev/null << EOF
 ui:
   ssl: false
   host: localhost
@@ -22,7 +31,7 @@ rest:
 EOF
 
 # Create/overwrite dspace-ui.json with specified content
-cat << EOF > /var/www/dspace-ui/dspace-ui.json
+sudo tee /var/www/dspace-ui/dspace-ui.json > /dev/null << EOF
 {
     "apps": [
         {
