@@ -1,93 +1,164 @@
 #!/bin/bash
 
-# Variables
-DOMAIN="repo.sltc.ac.lk"
-EMAIL="manojjsltc@gmail.com"  # Replace with your email
-NGINX_CONF="/etc/nginx/sites-available/$DOMAIN"
-NGINX_LINK="/etc/nginx/sites-enabled/$DOMAIN"
-SSR_URL="http://localhost:4000"  # SSR frontend
-BACKEND_URL="http://localhost:8080"  # Backend
+# Exit on critical errors
+set -e
 
-# Step 1: Update and Install Certbot and Nginx
-echo "Updating package list and installing Certbot and Nginx..."
-sudo apt update -y
-sudo apt install -y certbot python3-certbot-nginx nginx
+# Define versions
+NODE_VERSION="20"
+YARN_VERSION="1.22.19"
+SWAP_SIZE="8G"
 
-# Step 2: Create Initial Nginx Config (HTTP only)
-echo "Creating initial Nginx configuration for $DOMAIN (HTTP)..."
-cat <<EOF | sudo tee $NGINX_CONF
-server {
-    listen 80;
-    server_name $DOMAIN;
+# Colors for output
+RED="\033[0;31m"
+GREEN="\033[0;32m"
+NC="\033[0m"
 
-    location / {
-        root /var/www/html;  # Temporary for Certbot verification
-        try_files \$uri \$uri/ /index.html;
-    }
-}
-EOF
-
-# Step 3: Enable and Test Nginx Config
-echo "Enabling Nginx site and testing config..."
-sudo ln -s $NGINX_CONF $NGINX_LINK 2>/dev/null || echo "Site already enabled"
-sudo nginx -t && sudo systemctl restart nginx
-if [ $? -ne 0 ]; then
-    echo "Nginx config test failed. Check /etc/nginx/nginx.conf or $NGINX_CONF"
+# Check if script is run as root
+if [ "$EUID" -ne 0 ]; then
+    echo -e "${RED}Error: Please run this script as root (use sudo).${NC}"
     exit 1
 fi
 
-# Step 4: Generate SSL with Certbot
-echo "Generating SSL certificate for $DOMAIN..."
-sudo certbot --nginx -d $DOMAIN --non-interactive --agree-tos --email $EMAIL
-if [ $? -ne 0 ]; then
-    echo "Certbot failed. Check DNS (A record for $DOMAIN) and /var/log/letsencrypt/letsencrypt.log"
+echo -e "${GREEN}Starting DSpace Frontend installation on Ubuntu 22.04...${NC}"
+
+# Update system
+echo "Updating system packages..."
+apt update && apt upgrade -y
+
+# Configure swap space if not already 8GB
+echo "Configuring 8GB swap space..."
+if ! swapon --show | grep -q "8G"; then
+    echo "Creating 8GB swap file..."
+    fallocate -l "$SWAP_SIZE" /swapfile
+    chmod 600 /swapfile
+    mkswap /swapfile
+    swapon /swapfile
+    echo '/swapfile none swap sw 0 0' | tee -a /etc/fstab
+    echo "Swap space configured to 8GB"
+else
+    echo "8GB swap space already exists, skipping..."
+fi
+
+# Clean up any existing Node.js installation
+echo "Removing existing Node.js to ensure clean install..."
+apt remove nodejs -y
+apt autoremove -y
+apt autoclean
+
+# Install Node.js from Nodesource (includes npm)
+echo "Installing Node.js and npm from Nodesource..."
+apt install -y curl gnupg
+curl -fsSL https://deb.nodesource.com/setup_"$NODE_VERSION".x | bash -
+apt install -y nodejs || { echo -e "${RED}Error: Failed to install Node.js${NC}"; exit 1; }
+
+# Verify Node.js and npm
+echo "Verifying Node.js and npm installations..."
+node -v || { echo -e "${RED}Error: Node.js not working${NC}"; exit 1; }
+npm -v || { echo -e "${RED}Error: npm not installed${NC}"; exit 1; }
+
+# Install Yarn globally
+echo "Installing Yarn..."
+npm install -g yarn@"$YARN_VERSION" || { echo -e "${RED}Error: Failed to install Yarn${NC}"; exit 1; }
+yarn --version || { echo -e "${RED}Error: Yarn not working${NC}"; exit 1; }
+
+# Create frontend directory and setup
+echo "Setting up DSpace frontend application..."
+mkdir -p /opt/dspace-frontend
+cd /opt/dspace-frontend
+
+# Download DSpace Angular source
+echo "Downloading DSpace Angular source code..."
+curl -L -o dspace-angular.tar.gz https://github.com/DSpace/dspace-angular/archive/refs/tags/dspace-7.6.3.tar.gz || {
+    echo -e "${RED}Error: Failed to download DSpace Angular source${NC}";
+    exit 1;
+}
+tar -xzf dspace-angular.tar.gz --strip-components=1 || {
+    echo -e "${RED}Error: Failed to extract DSpace Angular source${NC}";
+    exit 1;
+}
+rm dspace-angular.tar.gz
+
+# Install dependencies
+echo "Installing frontend dependencies..."
+yarn install || { echo -e "${RED}Error: Failed to install Yarn dependencies${NC}"; exit 1; }
+
+# Configure environment
+echo "Configuring frontend environment..."
+cat <<EOL > config/config.prod.yml
+environment: production
+rest:
+  host: manojjx.shop
+  port: 443
+  ssl: true
+  nameSpace: /server
+ui:
+  host: localhost  # Bind to localhost instead of domain
+  port: 4000
+  ssl: false
+EOL
+
+# Build the frontend
+echo "Building DSpace frontend..."
+yarn build:prod || { echo -e "${RED}Error: Failed to build frontend${NC}"; exit 1; }
+
+# Set permissions with retry logic
+echo "Setting frontend permissions..."
+groupadd -f frontend || echo "Group frontend already exists, skipping..."
+if id "frontend" >/dev/null 2>&1; then
+    echo "User frontend already exists, skipping creation..."
+else
+    useradd -s /bin/false -g frontend -d /opt/dspace-frontend frontend
+fi
+for i in {1..3}; do
+    if chown -R frontend:frontend /opt/dspace-frontend; then
+        break
+    else
+        echo -e "${RED}Warning: Failed to set ownership (attempt $i/3), retrying...${NC}"
+        sleep 1
+    fi
+    [ "$i" -eq 3 ] && { echo -e "${RED}Error: Failed to set ownership after 3 attempts${NC}"; exit 1; }
+done
+for i in {1..3}; do
+    if chmod -R 750 /opt/dspace-frontend; then
+        break
+    else
+        echo -e "${RED}Warning: Failed to set permissions (attempt $i/3), retrying...${NC}"
+        sleep 1
+    fi
+    [ "$i" -eq 3 ] && { echo -e "${RED}Error: Failed to set permissions after 3 attempts${NC}"; exit 1; }
+done
+
+# Start frontend with Node.js and debug
+echo "Starting DSpace frontend..."
+sudo -u frontend nohup node dist/server/main.js > /opt/dspace-frontend/frontend.log 2>&1 &
+sleep 5  # Give more time to start
+if ps aux | grep -v grep | grep "node dist/server/main.js" > /dev/null; then
+    echo "Frontend process detected in the background"
+else
+    echo -e "${RED}Error: Frontend process not running. Checking logs...${NC}"
+    cat /opt/dspace-frontend/frontend.log
+    exit 1
+fi
+if sudo lsof -i :4000 > /dev/null; then
+    echo "Port 4000 is bound successfully"
+else
+    echo -e "${RED}Error: Port 4000 not bound. Checking logs...${NC}"
+    cat /opt/dspace-frontend/frontend.log
     exit 1
 fi
 
-# Step 5: Update Nginx Config for HTTPS and Proxy
-echo "Updating Nginx configuration for HTTPS and proxy..."
-cat <<EOF | sudo tee $NGINX_CONF
-server {
-    listen 80;
-    server_name $DOMAIN;
-    return 301 https://\$server_name\$request_uri;
-}
-
-server {
-    listen 443 ssl;
-    server_name $DOMAIN;
-
-    ssl_certificate /etc/letsencrypt/live/$DOMAIN/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;
-
-    location / {
-        proxy_pass $SSR_URL;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-    }
-
-    location /server {
-        proxy_pass $BACKEND_URL;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-    }
-}
-EOF
-
-# Step 6: Test and Restart Nginx
-echo "Testing updated Nginx config and restarting..."
-sudo nginx -t && sudo systemctl restart nginx
-if [ $? -ne 0 ]; then
-    echo "Nginx restart failed. Check config: $NGINX_CONF"
-    exit 1
+# Verify frontend
+echo "Verifying frontend installation..."
+sleep 5
+if curl -s http://localhost:4000 >/dev/null; then
+    echo -e "${GREEN}DSpace frontend installation completed successfully!${NC}"
+    echo "Frontend is running on http://localhost:4000"
+    echo "Assuming NGINX is configured to proxy this to https://manojjx.shop"
+else
+    echo -e "${RED}Warning: Frontend not accessible on http://localhost:4000. Check logs at /opt/dspace-frontend/frontend.log${NC}"
+    cat /opt/dspace-frontend/frontend.log
 fi
 
-# Step 7: Test Auto-Renewal
-echo "Testing SSL auto-renewal..."
-sudo certbot renew --dry-run
+echo "Frontend logs: /opt/dspace-frontend/frontend.log"
 
-echo "Setup complete! Access at https://$DOMAIN"
+exit 0
