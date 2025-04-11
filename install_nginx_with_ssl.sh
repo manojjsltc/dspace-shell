@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Variables
-DOMAIN="manojjx.shop"
-EMAIL="your-email@example.com"  # Replace with your email
+DOMAIN="repo.sltc.ac.lk"
+EMAIL="manojjsltc@gmail.com"  # Replace with your email
 NGINX_CONF="/etc/nginx/sites-available/$DOMAIN"
 NGINX_LINK="/etc/nginx/sites-enabled/$DOMAIN"
 SSR_URL="http://localhost:4000"  # SSR frontend
