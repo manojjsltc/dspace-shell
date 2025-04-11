@@ -21,64 +21,6 @@ RED="\033[0;31m"
 GREEN="\033[0;32m"
 NC="\033[0m"
 
-
-# Log file to record which services are found =============================================
-LOG_FILE="/tmp/service-check.log"
-
-# Function to check and restart a service if it exists and is active
-restart_service() {
-    local service="$1"
-    # Check if the service exists
-    if systemctl list-units --full -all | grep -q "$service"; then
-        echo "$service exists" | tee -a "$LOG_FILE"
-        # Check if the service is active
-        if systemctl is-active --quiet "$service"; then
-            echo "Restarting $service..." | tee -a "$LOG_FILE"
-            if sudo systemctl restart "$service"; then
-                echo "$service restarted successfully." | tee -a "$LOG_FILE"
-            else
-                echo -e "${RED}Error: Failed to restart $service${NC}" | tee -a "$LOG_FILE"
-            fi
-        else
-            echo "$service is not active, skipping restart." | tee -a "$LOG_FILE"
-        fi
-    else
-        echo "$service does not exist, skipping restart." | tee -a "$LOG_FILE"
-    fi
-}
-
-# Initialize log file
-echo "Service check log - $(date)" > "$LOG_FILE"
-
-# Run package updates non-interactively to avoid prompts
-echo "Updating system packages..."
-export DEBIAN_FRONTEND=noninteractive
-if ! sudo apt update; then
-    echo -e "${RED}Error: Failed to update package lists${NC}" | tee -a "$LOG_FILE"
-    exit 1
-fi
-if ! sudo apt upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"; then
-    echo -e "${RED}Error: Failed to upgrade packages${NC}" | tee -a "$LOG_FILE"
-    exit 1
-fi
-
-# Configure needrestart to auto-restart services (to avoid prompts)
-echo "Configuring needrestart for automatic restarts..."
-sudo mkdir -p /etc/needrestart
-echo "\$nrconf{restart} = 'a';" | sudo tee /etc/needrestart/needrestart.conf > /dev/null
-
-# Check and restart services listed in the prompt
-echo "Checking and restarting services..."
-for service in dbus.service irqbalance.service multipathd.service networkd-dispatcher.service packagekit.service polkit.service ssh.service systemd-logind.service unattended-upgrades.service user@1000.service; do
-    restart_service "$service"
-done
-
-# Display which services were found
-echo "Services found on this VPS (see $LOG_FILE for details):"
-cat "$LOG_FILE"
-# =================================================================================
-
-
 # Check if script is run as root
 if [ "$EUID" -ne 0 ]; then
     echo -e "${RED}Error: Please run this script as root (use sudo).${NC}"
