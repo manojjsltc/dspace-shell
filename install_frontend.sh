@@ -264,3 +264,8 @@ echo "View PM2 logs with: sudo -u frontend PM2_HOME=/home/frontend/.pm2 pm2 logs
 echo "Manage PM2 process with: sudo -u frontend PM2_HOME=/home/frontend/.pm2 pm2 [start|stop|restart] dspace-ui"
 
 exit 0
+
+
+# For manual restart frontend
+# sudo -u frontend PM2_HOME=/home/frontend/.pm2 pm2 restart /var/www/dspace-ui/dspace-ui.json
+# sudo -u frontend PM2_HOME=/home/frontend/.pm2 pm2 logs
