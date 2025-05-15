@@ -38,9 +38,30 @@ sudo apt install php${PHP_VERSION} libapache2-mod-php${PHP_VERSION} php${PHP_VER
 # Configure Apache to use PHP
 echo "Configuring Apache for PHP..."
 sudo sed -i "s/DirectoryIndex index.html/DirectoryIndex index.php index.html/" /etc/apache2/mods-enabled/dir.conf
+
+# Configure Apache default virtual host for WordPress project
+echo "Configuring Apache default virtual host with FollowSymLinks and AllowOverride..."
+cat <<EOF | sudo tee /etc/apache2/sites-available/000-default.conf
+<VirtualHost *:80>
+    ServerAdmin webmaster@localhost
+    DocumentRoot /var/www/html
+
+    <Directory /var/www/html>
+        Options FollowSymLinks
+        AllowOverride All
+        Require all granted
+    </Directory>
+
+    ErrorLog \${APACHE_LOG_DIR}/error.log
+    CustomLog \${APACHE_LOG_DIR}/access.log combined
+</VirtualHost>
+EOF
+
+# Enable rewrite module and restart Apache
+sudo a2enmod rewrite
 sudo systemctl restart apache2
 
-# Set up WordPress directly in /var/www/html
+# Set up WordPress in /var/www/html
 echo "Setting up WordPress in /var/www/html..."
 sudo rm -rf /var/www/html/* # Clear existing files in /var/www/html
 sudo chown -R www-data:www-data /var/www/html
@@ -70,14 +91,43 @@ sudo sed -i "s/database_name_here/$DB_NAME/" /var/www/html/wp-config.php
 sudo sed -i "s/username_here/$DB_USER/" /var/www/html/wp-config.php
 sudo sed -i "s/password_here/$DB_PASS/" /var/www/html/wp-config.php
 
-# Enable Apache rewrite module
-sudo a2enmod rewrite
-sudo systemctl restart apache2
+# Create .htaccess to increase upload limit and enable permalinks
+echo "Creating .htaccess to increase upload limit..."
+cat <<EOF | sudo tee /var/www/html/.htaccess
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteBase /
+RewriteRule ^index\.php$ - [L]
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule . /index.php [L]
+</IfModule>
+php_value upload_max_filesize 10G
+php_value post_max_size 10G
+php_value memory_limit 12G
+php_value max_execution_time 600
+php_value max_input_time 600
+EOF
 
-# Set proper permissions
+# Create php.ini to increase upload limit
+echo "Creating php.ini to increase upload limit..."
+cat <<EOF | sudo tee /var/www/html/php.ini
+upload_max_filesize = 10G
+post_max_size = 10G
+memory_limit = 12G
+max_execution_time = 600
+max_input_time = 600
+EOF
+
+# Set proper permissions for .htaccess and php.ini
+sudo chown www-data:www-data /var/www/html/.htaccess /var/www/html/php.ini
+sudo chmod 644 /var/www/html/.htaccess /var/www/html/php.ini
+
+# Set proper permissions for WordPress
 sudo chown -R www-data:www-data /var/www/html
 sudo chmod -R 755 /var/www/html
 
 echo "Setup complete! Access your WordPress site at http://your_server_ip"
 echo "Complete the WordPress installation via the web interface."
 echo "MySQL Database: $DB_NAME, User: $DB_USER, Password: $DB_PASS"
+echo "Upload limit set to 10GB in .htaccess and php.ini (may be restricted by host)."
