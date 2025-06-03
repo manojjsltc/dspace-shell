@@ -1,12 +1,36 @@
 #!/bin/bash
 
-# Check if PHP version is provided as an argument
+# Check if PHP version is provided as the first argument
 if [ -z "$1" ]; then
-  echo "Error: Please provide a PHP version (e.g., 7.4, 8.0, 8.1)"
+  echo "Error: Please provide a PHP version (e.g., 7.4, 8.0, 8.1, 8.2)"
+  exit 1
+fi
+PHP_VERSION="$1"
+
+# Check if WordPress version is provided as the second argument
+if [ -z "$2" ]; then
+  echo "Error: Please provide a WordPress version (e.g., 6.6.2)"
+  exit 1
+fi
+WP_VERSION="$2"
+
+# Validate WordPress version format (e.g., X.Y or X.Y.Z) using POSIX-compliant expr
+if ! expr "$WP_VERSION" : '^[0-9]\+\.[0-9]\+\(\.[0-9]\+\)\?$' >/dev/null; then
+  echo "Error: Invalid WordPress version format (e.g., use 6.6.2)"
   exit 1
 fi
 
-PHP_VERSION="$1"
+# Check if the WordPress version is downloadable
+WP_URL="https://wordpress.org/wordpress-${WP_VERSION}.tar.gz"
+WP_FILE="wordpress-${WP_VERSION}.tar.gz"
+echo "Checking if WordPress version $WP_VERSION is available..."
+wget --spider "$WP_URL" 2>&1 | grep -q "200 OK"
+if [ $? -ne 0 ]; then
+  echo "Error: WordPress version $WP_VERSION not found (404 error). Check available versions at https://wordpress.org/download/releases/"
+  exit 1
+else
+  echo "WordPress version $WP_VERSION is available for download."
+fi
 
 # Update and upgrade the system
 echo "Updating and upgrading Ubuntu..."
@@ -26,7 +50,8 @@ sudo systemctl enable mysql
 sudo systemctl start mysql
 
 # Secure MySQL installation (optional, adjust as needed)
-sudo mysql_secure_installation
+# Commenting out to avoid interactive prompts; run manually if needed
+# sudo mysql_secure_installation
 
 # Install PHP and required modules
 echo "Installing PHP $PHP_VERSION and modules..."
@@ -69,10 +94,15 @@ sudo chmod -R 755 /var/www/html
 
 # Download and extract WordPress
 cd /tmp
-wget https://wordpress.org/latest.tar.gz
-tar -xvzf latest.tar.gz
+echo "Downloading WordPress version $WP_VERSION..."
+wget "$WP_URL"
+if [ $? -ne 0 ]; then
+  echo "Error: Failed to download WordPress from $WP_URL"
+  exit 1
+fi
+tar -xvzf "$WP_FILE"
 sudo mv wordpress/* /var/www/html/
-sudo rm -rf wordpress latest.tar.gz
+sudo rm -rf wordpress "$WP_FILE"
 
 # Create MySQL database and user for WordPress
 DB_NAME="wordpress"
@@ -128,6 +158,7 @@ sudo chown -R www-data:www-data /var/www/html
 sudo chmod -R 755 /var/www/html
 
 echo "Setup complete! Access your WordPress site at http://your_server_ip"
+echo "WordPress version $WP_VERSION installed."
 echo "Complete the WordPress installation via the web interface."
 echo "MySQL Database: $DB_NAME, User: $DB_USER, Password: $DB_PASS"
 echo "Upload limit set to 10GB in .htaccess and php.ini (may be restricted by host)."
